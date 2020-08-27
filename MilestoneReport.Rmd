@@ -1,0 +1,159 @@
+---
+title: "Milestone Report"
+author: "Pingping"
+date: "8/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(NLP)
+library(tm)
+library(stringi)
+library(dplyr)
+library(RWeka)
+library(SnowballC)
+library(textmineR)
+library(ggplot2)
+```
+
+## Introduction
+
+The goal of this project includes the basic data loading, data cleaning and some exploratory analysis. Briefly, it consists the following information:
+
+1. How to download the data and  load the data.
+
+2. A basic report of summary statistics about the data sets.
+
+3. Some interesting findings.
+
+4. Feedback on the plan  for creating a prediction algorithm and Shiny app.
+
+## Load and clean the data
+
+First, if the data doesn't exist in the local file, we'll download the data from the following website: https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip.
+
+```{r, download the data, warning = FALSE}
+dataurl <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+# if data doesn't exist, download the data and unzip
+if (!file.exists("Coursera-SwiftKey.zip")) {
+  download.file(dataurl)
+  unzip("Coursera-SwiftKey.zip")
+}
+# load the data in the en_US, there are three of datasets
+blogs <- readLines("final/en_US/en_US.blogs.txt", encoding = "UTF-8", skipNul = T)
+news <- readLines("final/en_US/en_US.news.txt", encoding = "UTF-8", skipNul = T)
+twitter <- readLines("final/en_US/en_US.twitter.txt", encoding = "UTF-8", skipNul = T)
+```
+
+Here's some basic information about the datasets:
+
+```{r, basic info}
+library(stringi)
+blogsize <- file.size("final/en_US/en_US.blogs.txt")/1024/1024  
+newsize <- file.size("final/en_US/en_US.news.txt")/1024/1024  
+twittersize <- file.size("final/en_US/en_US.twitter.txt")/1024/1024  
+bloglength <- length(blogs)
+newslength <- length(news)
+twitterlength <- length(twitter)
+blogsword <- sum(stri_count_words(blogs))
+newsword <- sum(stri_count_words(news))
+twitterword <- sum(stri_count_words(twitter))
+file <- c("blogs", "news", "twitter")
+size_MB <- c(blogsize, newsize, twittersize)
+length <- c(bloglength, newslength, twitterlength)
+word <- c(blogsword, newsword, twitterword)
+basicinfo <- data.frame(file, size_MB, length, word)
+basicinfo
+```
+
+## Data sampling
+
+Considering that the file is too large, we'll take a small sample (1%) to analyze the data.
+
+```{r}
+set.seed(1234)
+data.sample <- c(sample(blogs, length(blogs) * 0.01),
+                 sample(news, length(news) * 0.01),
+                 sample(twitter, length(twitter) * 0.01))
+saveRDS(data.sample, 'sample.rds')
+```
+
+Now we have a single data.sample that includes the data from the blogs, news and twitter files.
+
+## Data cleaning
+
+Before the data analyzation, we'll first clean the data by removing all the punctuations, lowering the letters, removing non-English words, etc.
+
+```{r}
+sampledata <- readRDS("sample.rds")
+# Create a Corpus
+docs <- VCorpus(VectorSource(sampledata))
+# clean the data
+docs <- tm_map(docs, tolower) #change all letters to lower
+docs <- tm_map(docs, removePunctuation) #remove the punctuation
+docs <- tm_map(docs, removeNumbers) #remove numbers
+docs <- tm_map(docs, removeWords, stopwords("english")) #remove non-English words
+docs <- tm_map(docs, PlainTextDocument) #create plain text documents
+docs <- tm_map(docs, stemDocument) #stem words in a text document 
+docs <- tm_map(docs, stripWhitespace) #multiple whitespace characters are collapsed to a single blank
+```
+
+Now we have got a cleaner data for analyzation.
+
+## N-gram Tokenization
+
+We'll start creat the N-gram Tokenization to find the most frequent word or phrases used in the data.
+
+```{r}
+#Creat N-gram Tokenization
+singlegram <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1)) #single word
+bigram <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2)) #two words
+trigram <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3)) #three words
+
+# Create TermDocumentMatrix with Tokenizations and Remove Sparse Terms
+freq1 <- removeSparseTerms(TermDocumentMatrix(docs, control = list(tokenize = singlegram)), 0.9999)
+freq2 <- removeSparseTerms(TermDocumentMatrix(docs, control = list(tokenize = bigram)), 0.9999)
+freq3 <- removeSparseTerms(TermDocumentMatrix(docs, control = list(tokenize = trigram)), 0.9999)
+
+# Create frequencies and sort the words 
+single_freq <- sort(rowSums(as.matrix(freq1)), decreasing=TRUE)
+bi_freq <- sort(rowSums(as.matrix(freq2)), decreasing=TRUE)
+tri_freq <- sort(rowSums(as.matrix(freq3)), decreasing=TRUE)
+
+# Create DataFrames
+single_df <- data.frame(term=names(single_freq), freq=as.vector(single_freq))  
+bi_df <- data.frame(term=names(bi_freq), freq= as.vector(bi_freq))  
+tri_df <- data.frame(term=names(tri_freq), freq=as.vector(tri_freq))
+```
+
+We have got the most frequently used single words, biword and triword phrases.
+
+## Exploratory Analysis
+
+The top 20 fequently used single words are shown as below:
+
+```{r}
+g1 <- ggplot(single_df[1:20,],aes(x=reorder(term, -freq),y=freq))+ geom_bar(stat="identity", fill = "blue")
+g1 <- g1 + theme(axis.text.x=element_text(angle=45))
+g1 <- g1 + labs(title="Single word Frequency",x="Word",y="Frequency")
+g1
+```
+
+The top 20 fequently used biwords phases are shown as below:
+
+```{r}
+g2 <- ggplot(bi_df[1:20,],aes(x=reorder(term, -freq),y=freq))+ geom_bar(stat="identity", fill = "blue")
+g2 <- g2 + theme(axis.text.x=element_text(angle=45))
+g2 <- g2 + labs(title="Biword Phase Frequency",x="Phase",y="Frequency")
+g2
+```
+
+The top 20 fequently used triwords phases are shown as below:
+
+```{r}
+g3 <- ggplot(tri_df[1:20,],aes(x=reorder(term, -freq),y=freq))+ geom_bar(stat="identity", fill = "blue")
+g3 <- g3 + theme(axis.text.x=element_text(angle=45))
+g3 <- g3 + labs(title="Triword Phase Frequency",x="Phase",y="Frequency")
+g3
+```
